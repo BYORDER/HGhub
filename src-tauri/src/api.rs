@@ -23,6 +23,13 @@ impl Api {
         edge(&origin, "GET", path, None, token.as_deref()).await
     }
 
+    /// POST 空 JSON 体，走同一套边缘信封。
+    async fn post(&self, path: &str) -> Result<Value, String> {
+        let origin = base();
+        let token = self.session.token(&origin);
+        edge(&origin, "POST", path, Some(json!({})), token.as_deref()).await
+    }
+
     async fn authed(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
         let origin = base();
         let token = self
@@ -357,9 +364,30 @@ pub async fn api_video(state: State<'_, Api>, id: i64) -> Result<Value, String> 
 
 #[tauri::command]
 pub async fn api_play(state: State<'_, Api>, id: i64, ep: u32) -> Result<Value, String> {
-    state
-        .get(&format!("/api/videos/{id}/play?ep={ep}&page_texts=0"))
-        .await
+    // 上游已把播放凭证迁到单集 playback 接口，旧 /api/videos/{id}/play 只回空壳
+    // （status=1 但 video_url 为空），前端据此报「暂无播放地址」。
+    let raw = state
+        .post(&format!("/api/videos/{id}/episodes/{ep}/playback"))
+        .await?;
+
+    let pick = |key: &str| -> String {
+        raw.pointer(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    Ok(json!({
+        "id": id,
+        "ep_num": ep,
+        "video_url": pick("/streams/main"),
+        "video_url_hevc": pick("/streams/hevc"),
+        "media_id": "",
+        "video_key": "",
+        "video_api": "",
+        "video_iv": "",
+        "video_type": 1,
+    }))
 }
 
 /* ───────────────────────── 评论 / 互动 ───────────────────────── */
